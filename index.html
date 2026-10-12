@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <title>QRカメラ</title>
+  <script src="https://unpkg.com/html5-qrcode"></script>
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%; margin: 0; overflow: hidden;
+      background: #000; color: #fff;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    #camera { position: fixed; inset: 0; background: #000; overflow: hidden; }
+    #reader { position: absolute; inset: 0; width: 100%; height: 100%; border: 0 !important; }
+    #reader video { width: 100% !important; height: 100% !important; object-fit: cover !important; }
+    #reader__dashboard, #reader__header_message, #reader__status_span,
+    #reader__camera_selection, #reader__camera_permission_button,
+    #reader__filescan_input { display: none !important; }
+    #reader__scan_region { border: 0 !important; background: transparent !important; }
+    .topbar {
+      position: absolute; z-index: 10; top: max(18px, env(safe-area-inset-top));
+      left: 16px; right: 16px; display: flex; align-items: center;
+      justify-content: space-between; gap: 12px; pointer-events: none;
+    }
+    .brand { font-size: 17px; font-weight: 700; letter-spacing: .04em; text-shadow: 0 1px 8px #000; }
+    .status {
+      max-width: 70%; padding: 8px 12px; border: 1px solid #ffffff55;
+      border-radius: 999px; background: #0009; font-size: 12px;
+      text-align: center; backdrop-filter: blur(8px);
+    }
+    .hint {
+      position: absolute; z-index: 10; left: 18px; right: 18px;
+      bottom: calc(155px + env(safe-area-inset-bottom)); text-align: center;
+      font-size: 14px; line-height: 1.5; color: #fff;
+      text-shadow: 0 1px 8px #000; pointer-events: none;
+    }
+    .controls {
+      position: absolute; z-index: 10; left: 0; right: 0;
+      bottom: max(34px, env(safe-area-inset-bottom)); display: flex;
+      align-items: center; justify-content: center; gap: 24px; padding: 0 18px;
+    }
+    .control-wrap { position: relative; display: flex; justify-content: center; }
+    .control {
+      width: 56px; height: 56px; display: grid; place-items: center;
+      border: 1px solid #ffffff66; border-radius: 50%; color: #fff;
+      background: #111c; backdrop-filter: blur(10px); font-size: 23px;
+      cursor: pointer; -webkit-tap-highlight-color: transparent;
+    }
+    .control:active { transform: scale(.96); }
+    .control:disabled { opacity: .45; cursor: default; }
+    .control-label {
+      position: absolute; top: 62px; font-size: 11px; white-space: nowrap;
+      color: #fff; text-shadow: 0 1px 6px #000;
+    }
+    .shutter {
+      width: 72px; height: 72px; border: 4px solid #fff;
+      background: #ffffff35; box-shadow: 0 0 0 4px #0005;
+      font-size: 0; position: relative;
+    }
+    .shutter::after {
+      content: ""; width: 52px; height: 52px; border-radius: 50%;
+      background: #fff; display: block;
+    }
+    .shutter:active::after { transform: scale(.92); }
+    .message {
+      position: absolute; z-index: 20; left: 18px; right: 18px; top: 50%;
+      transform: translateY(-50%); padding: 18px; border-radius: 16px;
+      background: #161616ed; text-align: center; line-height: 1.6;
+      box-shadow: 0 8px 30px #0008;
+    }
+    .message[hidden] { display: none; }
+    .retry, .secondary {
+      margin-top: 12px; padding: 10px 16px; border: 0; border-radius: 999px;
+      background: #fff; color: #111; font-size: 14px; font-weight: 650; cursor: pointer;
+    }
+    .secondary { background: #333; color: #fff; margin-left: 6px; }
+    #previewOverlay {
+      position: fixed; z-index: 30; inset: 0; background: #000f;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      padding: 20px; gap: 14px;
+    }
+    #previewOverlay[hidden] { display: none; }
+    #photoPreview { max-width: 100%; max-height: 72vh; object-fit: contain; border-radius: 8px; }
+    .preview-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+    .preview-actions a, .preview-actions button {
+      display: inline-block; padding: 11px 16px; border: 0; border-radius: 999px;
+      background: #fff; color: #111; text-decoration: none; font: inherit; font-weight: 650;
+    }
+    .preview-actions button { background: #333; color: #fff; }
+  </style>
+</head>
+<body>
+  <main id="camera" aria-label="QRコード対応カメラ">
+    <div id="reader"></div>
+    <div class="topbar">
+      <div class="brand">QR CAMERA</div>
+      <div id="status" class="status">カメラを準備中…</div>
+    </div>
+    <div id="hint" class="hint">QRコードを映すと自動でサイトを開きます<br>写真は中央のボタンで撮影できます</div>
+    <div class="controls">
+      <div class="control-wrap">
+        <button id="switchButton" class="control" type="button" aria-label="カメラ切り替え">↻</button>
+        <span class="control-label">切替</span>
+      </div>
+      <div class="control-wrap">
+        <button id="shutterButton" class="control shutter" type="button" aria-label="写真を撮影"></button>
+        <span class="control-label">撮影</span>
+      </div>
+      <div class="control-wrap">
+        <button id="torchButton" class="control" type="button" aria-label="ライト切り替え" disabled>⚡</button>
+        <span class="control-label">ライト</span>
+      </div>
+    </div>
+    <div id="message" class="message" hidden>
+      <div id="messageText">カメラを起動できませんでした。</div>
+      <button id="retryButton" class="retry" type="button">もう一度試す</button>
+    </div>
+  </main>
+
+  <div id="previewOverlay" hidden>
+    <img id="photoPreview" alt="撮影した写真のプレビュー">
+    <div class="preview-actions">
+      <a id="downloadPhoto" download="qr-camera-photo.jpg">写真を保存</a>
+      <button id="retakeButton" type="button">撮り直す</button>
+    </div>
+  </div>
+
+  <script>
+    const statusEl = document.getElementById("status");
+    const hintEl = document.getElementById("hint");
+    const messageEl = document.getElementById("message");
+    const messageTextEl = document.getElementById("messageText");
+    const switchButton = document.getElementById("switchButton");
+    const shutterButton = document.getElementById("shutterButton");
+    const torchButton = document.getElementById("torchButton");
+    const retryButton = document.getElementById("retryButton");
+    const previewOverlay = document.getElementById("previewOverlay");
+    const photoPreview = document.getElementById("photoPreview");
+    const downloadPhoto = document.getElementById("downloadPhoto");
+    const retakeButton = document.getElementById("retakeButton");
+
+    const scanner = new Html5Qrcode("reader", {
+      formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+      verbose: false
+    });
+
+    let cameras = [];
+    let cameraIndex = 0;
+    let running = false;
+    let navigating = false;
+    let torchOn = false;
+    let lastPhotoUrl = null;
+
+    function setStatus(text) { statusEl.textContent = text; }
+    function showError(text) {
+      messageTextEl.textContent = text;
+      messageEl.hidden = false;
+      setStatus("カメラを起動できません");
+    }
+    function hideError() { messageEl.hidden = true; }
+    function isWebUrl(value) {
+      try {
+        const url = new URL(value);
+        return url.protocol === "https:" || url.protocol === "http:";
+      } catch { return false; }
+    }
+
+    function onScanSuccess(decodedText) {
+      if (navigating || previewOverlay.hidden === false) return;
+      if (!isWebUrl(decodedText)) {
+        hintEl.textContent = "WebサイトのQRコードを読み取ってください";
+        return;
+      }
+      navigating = true;
+      setStatus("サイトを開いています…");
+      hintEl.textContent = "移動しています…";
+      window.location.assign(decodedText);
+    }
+
+    async function startCamera(index = 0) {
+      hideError();
+      torchButton.disabled = true;
+      torchOn = false;
+      try {
+        if (running) {
+          await scanner.stop();
+          running = false;
+        }
+        if (!cameras.length) cameras = await Html5Qrcode.getCameras();
+        if (!cameras.length) throw new Error("利用できるカメラが見つかりません。");
+
+        cameraIndex = ((index % cameras.length) + cameras.length) % cameras.length;
+        setStatus("カメラを起動中…");
+        await scanner.start(
+          cameras[cameraIndex].id,
+          { fps: 15 },
+          onScanSuccess,
+          () => {}
+        );
+        running = true;
+        setStatus("QRコードを探しています");
+        hintEl.innerHTML = "QRコードを映すと自動でサイトを開きます<br>写真は中央のボタンで撮影できます";
+        torchButton.disabled = false;
+      } catch (error) {
+        console.error(error);
+        showError("カメラを起動できませんでした。ブラウザのカメラ許可を確認し、HTTPSで開いてからもう一度試してください。");
+      }
+    }
+
+    async function takePhoto() {
+      if (!running) {
+        hintEl.textContent = "カメラが起動するまで待ってね";
+        return;
+      }
+      const video = document.querySelector("#reader video");
+      if (!video || !video.videoWidth || !video.videoHeight) {
+        hintEl.textContent = "カメラ映像を準備中です。少し待ってね";
+        return;
+      }
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext("2d");
+        // Match the mirrored preview often used by front-facing cameras.
+        if (cameras[cameraIndex]?.label?.toLowerCase().includes("front")) {
+          ctx.translate(canvas.width, 0);
+          ctx.scale(-1, 1);
+        }
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.92));
+        if (!blob) throw new Error("写真を作成できませんでした。");
+        if (lastPhotoUrl) URL.revokeObjectURL(lastPhotoUrl);
+        lastPhotoUrl = URL.createObjectURL(blob);
+        photoPreview.src = lastPhotoUrl;
+        downloadPhoto.href = lastPhotoUrl;
+        downloadPhoto.download = `qr-camera-${new Date().toISOString().replace(/[:.]/g, "-")}.jpg`;
+        previewOverlay.hidden = false;
+      } catch (error) {
+        console.error(error);
+        hintEl.textContent = "撮影に失敗しました。もう一度試してね";
+      }
+    }
+
+    function closePreview() {
+      previewOverlay.hidden = true;
+      photoPreview.removeAttribute("src");
+      if (lastPhotoUrl) {
+        URL.revokeObjectURL(lastPhotoUrl);
+        lastPhotoUrl = null;
+      }
+    }
+
+    shutterButton.addEventListener("click", takePhoto);
+    retakeButton.addEventListener("click", closePreview);
+
+    switchButton.addEventListener("click", async () => {
+      if (cameras.length < 2) {
+        try { cameras = await Html5Qrcode.getCameras(); } catch (error) { console.error(error); }
+      }
+      if (cameras.length > 1) await startCamera(cameraIndex + 1);
+      else hintEl.textContent = "切り替え可能なカメラがありません";
+    });
+
+    torchButton.addEventListener("click", async () => {
+      if (!running) return;
+      try {
+        const nextTorch = !torchOn;
+        await scanner.applyVideoConstraints({ advanced: [{ torch: nextTorch }] });
+        torchOn = nextTorch;
+        torchButton.textContent = torchOn ? "🔦" : "⚡";
+        hintEl.textContent = torchOn ? "ライト ON" : "QRコードを映すと自動でサイトを開きます";
+      } catch (error) {
+        torchOn = false;
+        hintEl.textContent = "この端末・ブラウザではライトを操作できません";
+        console.warn(error);
+      }
+    });
+
+    retryButton.addEventListener("click", async () => {
+      cameras = [];
+      await startCamera(0);
+    });
+
+    document.addEventListener("visibilitychange", async () => {
+      if (document.visibilityState === "visible" && !running && !navigating) {
+        await startCamera(cameraIndex);
+      }
+    });
+
+    startCamera();
+  </script>
+</body>
+</html>
