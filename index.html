@@ -31,13 +31,8 @@
       border-radius: 999px; background: #0009; font-size: 12px;
       text-align: center; backdrop-filter: blur(8px);
     }
-    .hint {
-      position: absolute; z-index: 10; left: 18px; right: 18px;
-      bottom: calc(155px + env(safe-area-inset-bottom)); text-align: center;
-      font-size: 14px; line-height: 1.5; color: #fff;
-      text-shadow: 0 1px 8px #000; pointer-events: none;
-      display: none !important;
-    }
+    .hint { display: none !important; }
+    .status { display: none !important; }
     .controls {
       position: absolute; z-index: 10; left: 0; right: 0;
       bottom: max(34px, env(safe-area-inset-bottom)); display: flex;
@@ -90,7 +85,8 @@
       display: inline-block; padding: 11px 16px; border: 0; border-radius: 999px;
       background: #fff; color: #111; text-decoration: none; font: inherit; font-weight: 650;
     }
-    .preview-actions button { background: #333; color: #fff; }
+    .preview-actions button { background: #333; color: #fff; cursor: pointer; }
+    #saveToPhotosButton { background: #fff; color: #111; }
   </style>
 </head>
 <body>
@@ -125,6 +121,7 @@
     <img id="photoPreview" alt="撮影した写真のプレビュー">
     <div class="preview-actions">
       <a id="downloadPhoto" download="qr-camera-photo.jpg">写真を保存</a>
+      <button id="saveToPhotosButton" type="button">写真アプリに保存</button>
       <button id="retakeButton" type="button">撮り直す</button>
     </div>
   </div>
@@ -142,6 +139,7 @@
     const photoPreview = document.getElementById("photoPreview");
     const downloadPhoto = document.getElementById("downloadPhoto");
     const retakeButton = document.getElementById("retakeButton");
+    const saveToPhotosButton = document.getElementById("saveToPhotosButton");
 
     const scanner = new Html5Qrcode("reader", {
       formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
@@ -154,6 +152,8 @@
     let navigating = false;
     let torchOn = false;
     let lastPhotoUrl = null;
+    let lastPhotoBlob = null;
+    let lastPhotoName = "camera-photo.jpg";
 
     function setStatus(text) { statusEl.textContent = text; }
     function showError(text) {
@@ -202,7 +202,7 @@
           () => {}
         );
         running = true;
-        setStatus("起動完了！");
+        setStatus("QRコードを探しています");
         hintEl.innerHTML = "QRコードを映すと自動でサイトを開きます<br>写真は中央のボタンで撮影できます";
         torchButton.disabled = false;
       } catch (error) {
@@ -235,14 +235,33 @@
         const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.92));
         if (!blob) throw new Error("写真を作成できませんでした。");
         if (lastPhotoUrl) URL.revokeObjectURL(lastPhotoUrl);
+        lastPhotoBlob = blob;
+        lastPhotoName = `camera-${new Date().toISOString().replace(/[:.]/g, "-")}.jpg`;
         lastPhotoUrl = URL.createObjectURL(blob);
         photoPreview.src = lastPhotoUrl;
         downloadPhoto.href = lastPhotoUrl;
-        downloadPhoto.download = `qr-camera-${new Date().toISOString().replace(/[:.]/g, "-")}.jpg`;
+        downloadPhoto.download = lastPhotoName;
         previewOverlay.hidden = false;
       } catch (error) {
         console.error(error);
         hintEl.textContent = "撮影に失敗しました。もう一度試してね";
+      }
+    }
+
+    async function saveToPhotos() {
+      if (!lastPhotoBlob) return;
+      const file = new File([lastPhotoBlob], lastPhotoName, { type: "image/jpeg" });
+      try {
+        if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file], title: "撮影した写真" });
+        } else {
+          alert("このブラウザでは写真の共有保存に対応していないよ。『ダウンロード』を使ってね。");
+        }
+      } catch (error) {
+        if (error && error.name !== "AbortError") {
+          console.error(error);
+          alert("共有メニューを開けなかったよ。もう一度試してね。");
+        }
       }
     }
 
@@ -253,10 +272,12 @@
         URL.revokeObjectURL(lastPhotoUrl);
         lastPhotoUrl = null;
       }
+      lastPhotoBlob = null;
     }
 
     shutterButton.addEventListener("click", takePhoto);
     retakeButton.addEventListener("click", closePreview);
+    saveToPhotosButton.addEventListener("click", saveToPhotos);
 
     switchButton.addEventListener("click", async () => {
       if (cameras.length < 2) {
